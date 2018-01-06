@@ -25,6 +25,30 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
 	// Add random Gaussian noise to each particle.
 	// NOTE: Consult particle_filter.h for more information about this method (and others in this file).
 
+    const int num_particles = 20;
+    default_random_engine gen;
+
+    // creates a normal (Gaussian) distribution for x, y and theta.
+    normal_distribution<double> dist_x(x, std[0]);
+    normal_distribution<double> dist_y(y, std[1]);
+    normal_distribution<double> dist_theta(theta, std[2]);
+
+    for (int i = 0; i < num_particles; ++i) {
+        Particle p;
+        p.id = i;
+        p.x = dist_x(gen);
+        p.y = dist_y(gen);
+        p.theta = dist_theta(gen);
+        p.weight = 1;
+        particles.push_back(p);
+    }
+
+    cout << "init()" << endl;
+    for (auto& p : particles) {
+        cout << p.id << " " << p.x << " "  << p.y << endl;
+    }
+
+    is_initialized = true;
 }
 
 void ParticleFilter::prediction(double delta_t, double std_pos[], double velocity, double yaw_rate) {
@@ -33,6 +57,26 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
 	//  http://en.cppreference.com/w/cpp/numeric/random/normal_distribution
 	//  http://www.cplusplus.com/reference/random/default_random_engine/
 
+    default_random_engine gen;
+    normal_distribution<double> dist_x(0, std_pos[0]);
+    normal_distribution<double> dist_y(0, std_pos[1]);
+    normal_distribution<double> dist_theta(0, std_pos[2]);
+
+    cout << "prediction()" << endl;
+    for (auto& p : particles) {
+    
+        cout << "before : "<< p.id << " " << p.x << " "  << p.y << endl;
+    
+        const double p_x = p.x;
+        const double p_y = p.y;
+        const double p_theta = p.theta;
+        const double yr_dt = yaw_rate * delta_t;
+        p.x = p_x + velocity / p_theta * (sin(p_theta + yr_dt) - sin(p_theta)) + dist_x(gen);
+        p.y = p_y + velocity / p_theta * (cos(p_theta) - cos(p_theta + yr_dt)) + dist_y(gen);
+        p.theta = p_theta + yr_dt + dist_theta(gen);
+    
+        cout << "after : " << p.id << " " << p.x << " "  << p.y << endl;
+    }    
 }
 
 void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::vector<LandmarkObs>& observations) {
@@ -41,6 +85,20 @@ void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::ve
 	// NOTE: this method will NOT be called by the grading code. But you will probably find it useful to 
 	//   implement this method and use it as a helper during the updateWeights phase.
 
+    cout << "dataAssociation()" << endl;
+
+    for(auto& pred : predicted) {
+        int min_id = -1;
+        double min_dist = -1;
+        for(auto& ob : observations) {
+            double distance = dist(pred.x, pred.y, ob.x, ob.y); 
+            if (min_id == -1 || min_dist > distance ) {                
+                min_dist = distance;
+                min_id = ob.id;
+            }
+        }
+        pred.id = min_id;
+    }
 }
 
 void ParticleFilter::updateWeights(double sensor_range, double std_landmark[], 
@@ -55,6 +113,66 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	//   and the following is a good resource for the actual equation to implement (look at equation 
 	//   3.33
 	//   http://planning.cs.uiuc.edu/node99.html
+
+    cout << "updateWeights()" << endl;
+
+    double total_weight = 0;
+    for (auto& p : particles) {
+        const double p_x = p.x;
+        const double p_y = p.y;
+        const double p_theta = p.theta;
+
+        cout << "    p.x : " << p_x << " p.y : " << p_y << " p.theta : " << p_theta << " p.id : " << p.id << endl;
+
+        for (auto& ob : observations) {
+
+            cout << "    ob.x : " << ob.x << " ob.y : " << ob.y << " ob.id : " << ob.id << endl;
+
+            // transform to map coordinate
+            LandmarkObs map_ob;
+            map_ob.x = p_x + (cos(p_theta) * ob.x) - (sin(p_theta) * ob.y);
+            map_ob.y = p_y + (sin(p_theta) * ob.y) + (cos(p_theta) * ob.y);
+
+            int min_id = -1;
+            double min_dist = -1;
+            for (auto& landmark : map_landmarks.landmark_list) {
+                if (sensor_range < dist(p_x, p_y, landmark.x_f, landmark.y_f))
+                    continue;
+
+                double distance = dist(map_ob.x, map_ob.y, landmark.x_f, landmark.y_f); 
+                if (min_id == -1 || min_dist > distance ) {                
+                    min_dist = distance;
+                    min_id = ob.id;
+                }
+            }
+            map_ob.id = min_id;
+
+            const double sig_x = std_landmark[0];
+            const double sig_y = std_landmark[1];
+            const double mu_x = map_landmarks.landmark_list[map_ob.id].x_f;
+            const double mu_y = map_landmarks.landmark_list[map_ob.id].y_f;
+
+            const double gauss_norm = (1/(2 * M_PI * sig_x *  sig_y));
+
+            const double diff_x = (map_ob.x - mu_x);
+            const double diff_y = (map_ob.y - mu_y);
+            const double exponent = (diff_x * diff_x)/(2 * sig_x * sig_x) + (diff_y * diff_y)/(2 * sig_y * sig_y);
+            const double weight = gauss_norm * exp(-exponent);
+
+            p.weight *= weight;
+
+            cout << "    map_ob.x : " << map_ob.x << " map_ob.y : " << map_ob.y << " map_ob.id : " << map_ob.id << endl;
+            cout << "        sig_x : " << sig_x << " sig_y : " << sig_y << " mu_x : " << mu_x << " mu_y : " << mu_y << " weight : " << weight << endl;
+        }
+
+        weights.push_back(p.weight);
+        total_weight += p.weight;
+    }
+
+    for (auto& w : weights) {
+        w /= total_weight;
+        cout << "    weight : "<< w << " total_weight : " << total_weight << endl;
+    }
 }
 
 void ParticleFilter::resample() {
@@ -62,6 +180,18 @@ void ParticleFilter::resample() {
 	// NOTE: You may find std::discrete_distribution helpful here.
 	//   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
 
+    default_random_engine gen;
+    discrete_distribution<> d(weights.begin(), weights.end());
+
+    std::vector<Particle> resampled;
+    const int n = particles.size();
+
+    for (int i = 0; i < n; ++i)
+    {
+        resampled.push_back(particles[d(gen)]);
+    }
+
+    particles = resampled;
 }
 
 Particle ParticleFilter::SetAssociations(Particle& particle, const std::vector<int>& associations, 
