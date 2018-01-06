@@ -25,7 +25,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
 	// Add random Gaussian noise to each particle.
 	// NOTE: Consult particle_filter.h for more information about this method (and others in this file).
 
-    const int num_particles = 50;
+    const int num_particles = 25;
     default_random_engine gen;
 
     // creates a normal (Gaussian) distribution for x, y and theta.
@@ -144,6 +144,13 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
         const double p_y = p.y;
         const double p_theta = p.theta;
 
+        vector<Map::single_landmark_s> in_range_landmarks;
+        in_range_landmarks.clear();
+        for (auto& landmark : map_landmarks.landmark_list) {
+            if (sensor_range >= dist(p_x, p_y, landmark.x_f, landmark.y_f))
+                in_range_landmarks.push_back(landmark);
+        }
+
         // cout << "    p.x : " << p_x << " p.y : " << p_y << " p.theta : " << p_theta << " p.id : " << p.id << endl;
 
         for (auto& ob : observations) {
@@ -155,10 +162,7 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 
             int min_id = -1;
             double min_dist = -1;
-            for (auto& landmark : map_landmarks.landmark_list) {
-                if (sensor_range < dist(p_x, p_y, landmark.x_f, landmark.y_f))
-                    continue;
-
+            for (auto& landmark : in_range_landmarks) {
                 double distance = dist(map_ob.x, map_ob.y, landmark.x_f, landmark.y_f);
                 if (min_id == -1 || min_dist > distance ) {
                     min_dist = distance;
